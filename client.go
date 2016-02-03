@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
-	"regexp"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -23,22 +23,26 @@ var Upgrader = websocket.Upgrader{
 	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
-type message struct {
-	to      string
-	regex   *regexp.Regexp
-	content []byte
+type Payload []byte
+
+type Message struct {
+	Event   string
+	Payload Payload
+	uuid    string
+	tag     string
 }
 type Listener interface {
 	GetUUID() string
 	GetTag() string
-	Send(b []byte)
-	Listen() error
+	EventHandler
 }
 type client struct {
 	ws   *websocket.Conn
-	send chan []byte
+	send chan Message
 	uuid string
 	tag  string
+	*sync.RWMutex
+	events map[string]func(data Payload) Payload
 }
 
 func NewClient(tag string, w http.ResponseWriter, r *http.Request) (c Listener, err error) {
@@ -50,18 +54,27 @@ func NewClient(tag string, w http.ResponseWriter, r *http.Request) (c Listener, 
 	}
 	uuid := fmt.Sprintf("%s", out)
 	c = &client{
-		ws:   ws,
-		send: make(chan []byte, 4096),
-		uuid: uuid,
-		tag:  tag,
+		ws:      ws,
+		send:    make(chan Message, 4096),
+		uuid:    uuid,
+		tag:     tag,
+		RWMutex: new(sync.RWMutex),
+		events:  make(map[string]func(data Payload) Payload),
 	}
 	return
 }
+func (c *client) On(event string, f func(data Payload) Payload) (err error) {
+	c.Lock()
+	c.events[event] = f
+	c.Unlock()
+	return
 
-func (c *client) Send(b []byte) {
-	c.send <- b
+}
+func (c *client) Emit(event string, data Payload) (err error) {
+	c.send <- Message{event, data, c.uuid, c.tag}
 	return
 }
+
 func (c *client) GetUUID() string {
 	return c.uuid
 }
@@ -82,13 +95,16 @@ func (c *client) readPump() <-chan error {
 		c.ws.SetReadDeadline(time.Now().Add(pongWait))
 		c.ws.SetPongHandler(func(string) error { c.ws.SetReadDeadline(time.Now().Add(pongWait)); return nil })
 		for {
-			_, _, err := c.ws.ReadMessage()
+			msgType, data, err := c.ws.ReadMessage()
 			if err != nil {
 				errChan <- err
 				close(errChan)
 				return
-
 			}
+			if msgType != websocket.TextMessage {
+				continue
+			}
+			c.Emit("SendScuess", data)
 		}
 	}()
 	return errChan
@@ -121,7 +137,13 @@ func (c *client) writePump() <-chan error {
 					close(errChan)
 					return
 				}
-				if err := c.write(websocket.TextMessage, msg); err != nil {
+				var payload Payload
+				if f, ok := c.events[msg.Event]; ok {
+					payload = f(msg.Payload)
+				} else {
+					payload = msg.Payload
+				}
+				if err := c.write(websocket.TextMessage, payload); err != nil {
 					errChan <- err
 					close(errChan)
 					return

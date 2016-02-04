@@ -60,9 +60,8 @@ func (e *app) NewClient(tag string, m MessageParser, w http.ResponseWriter, r *h
 		uuid:          uuid,
 		tag:           tag,
 		MessageParser: m,
+		app:           e,
 	}
-	go c.Listen()
-	e.join <- c
 	return
 }
 func (e *app) listenRedis() <-chan error {

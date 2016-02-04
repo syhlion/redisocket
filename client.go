@@ -43,6 +43,7 @@ type client struct {
 	*sync.RWMutex
 	events map[string]func(data Payload) Payload
 	MessageParser
+	app *app
 }
 
 func (c *client) On(event string, f func(data Payload) Payload) (err error) {
@@ -97,6 +98,7 @@ func (c *client) readPump() <-chan error {
 func (c *client) Listen() (err error) {
 	writeErr := c.writePump()
 	readErr := c.readPump()
+	c.app.join <- c
 	select {
 	case e := <-writeErr:
 		return e

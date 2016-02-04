@@ -1,9 +1,7 @@
 package redisocket
 
 import (
-	"fmt"
 	"net/http"
-	"os/exec"
 	"sync"
 	"time"
 
@@ -25,13 +23,14 @@ var Upgrader = websocket.Upgrader{
 
 type Payload []byte
 
+type MessageParser interface {
+	Parse([]byte) Message
+}
 type Message struct {
 	Event   string
 	Payload Payload
-	uuid    string
-	tag     string
 }
-type Listener interface {
+type Client interface {
 	GetUUID() string
 	GetTag() string
 	EventHandler
@@ -43,26 +42,9 @@ type client struct {
 	tag  string
 	*sync.RWMutex
 	events map[string]func(data Payload) Payload
+	MessageParser
 }
 
-func NewClient(tag string, w http.ResponseWriter, r *http.Request) (c Listener, err error) {
-
-	ws, err := Upgrader.Upgrade(w, r, nil)
-	out, err := exec.Command("uuidgen").Output()
-	if err != nil {
-		return
-	}
-	uuid := fmt.Sprintf("%s", out)
-	c = &client{
-		ws:      ws,
-		send:    make(chan Message, 4096),
-		uuid:    uuid,
-		tag:     tag,
-		RWMutex: new(sync.RWMutex),
-		events:  make(map[string]func(data Payload) Payload),
-	}
-	return
-}
 func (c *client) On(event string, f func(data Payload) Payload) (err error) {
 	c.Lock()
 	c.events[event] = f
@@ -71,7 +53,7 @@ func (c *client) On(event string, f func(data Payload) Payload) (err error) {
 
 }
 func (c *client) Emit(event string, data Payload) (err error) {
-	c.send <- Message{event, data, c.uuid, c.tag}
+	c.send <- Message{event, data}
 	return
 }
 
@@ -104,7 +86,8 @@ func (c *client) readPump() <-chan error {
 			if msgType != websocket.TextMessage {
 				continue
 			}
-			c.Emit("SendScuess", data)
+			m := c.Parse(data)
+			c.send <- m
 		}
 	}()
 	return errChan

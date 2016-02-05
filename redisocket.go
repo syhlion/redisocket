@@ -2,31 +2,64 @@ package redisocket
 
 import (
 	"fmt"
-	"net"
 	"net/http"
 	"os/exec"
 	"sync"
 	"time"
 
 	"github.com/garyburd/redigo/redis"
+	"github.com/gorilla/websocket"
+)
+
+const (
+	writeWait      = 10 * time.Second
+	pongWait       = 60 * time.Second
+	pingPeriod     = (pongWait * 9) / 10
+	maxMessageSize = 512
+	EVENT_JOIN     = "EVENT_JOIN"
+	EVENT_LEAVE    = "EVENT_LEAVE"
+	EVENT_KICK     = "EVENT_KICK"
 )
 
 var conn redis.Conn
+var Upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+	CheckOrigin:     func(r *http.Request) bool { return true },
+}
+
+type Payload []byte
+
+type MessageParser interface {
+	Parse(EventHandler, []byte) error
+}
+type Message struct {
+	Event   string
+	Payload Payload
+}
+type Client interface {
+	GetUUID() string
+	GetTag() string
+	EventHandler
+}
+type EventCallback func(data Payload) (p Payload, e error)
 
 type EventHandler interface {
 	Listen() (err error)
-	On(event string, f func(data Payload) Payload) error
+	On(event string, f EventCallback) error
 	Emit(event string, data Payload) error
 }
 
 type App interface {
 	NewClient(tag string, m MessageParser, w http.ResponseWriter, r *http.Request) (Client, error)
+	Count() int
 	EventHandler
 }
 type app struct {
 	psc       *redis.PubSubConn
 	conn      redis.Conn
-	events    map[string]func(data Payload) Payload
+	rpool     *redis.Pool
+	events    map[string]EventCallback
 	clients   map[Client]bool
 	join      chan Client
 	leave     chan Client
@@ -34,17 +67,23 @@ type app struct {
 	*sync.RWMutex
 }
 
-func NewApp(netConn net.Conn, readTimeout, writeTimeout time.Duration) App {
-	conn = redis.NewConn(netConn, readTimeout, writeTimeout)
+func NewApp(address string) App {
+	pool := redis.NewPool(func() (redis.Conn, error) {
+
+		return redis.Dial("tcp", address)
+
+	}, 5)
 	e := &app{
-		psc:       &redis.PubSubConn{conn},
-		conn:      conn,
-		events:    make(map[string]func(data Payload) Payload),
+		rpool:     pool,
+		psc:       &redis.PubSubConn{pool.Get()},
+		events:    make(map[string]EventCallback),
+		clients:   make(map[Client]bool),
 		RWMutex:   new(sync.RWMutex),
 		join:      make(chan Client, 1024),
 		leave:     make(chan Client, 1024),
 		broadcast: make(chan Message, 1024),
 	}
+	e.On(EVENT_KICK, default_kick_callback)
 	return e
 }
 func (e *app) NewClient(tag string, m MessageParser, w http.ResponseWriter, r *http.Request) (c Client, err error) {
@@ -57,11 +96,14 @@ func (e *app) NewClient(tag string, m MessageParser, w http.ResponseWriter, r *h
 	c = &client{
 		ws:            ws,
 		send:          make(chan Message, 4096),
+		events:        make(map[string]EventCallback),
+		RWMutex:       new(sync.RWMutex),
 		uuid:          uuid,
 		tag:           tag,
 		MessageParser: m,
 		app:           e,
 	}
+	c.On(EVENT_KICK, default_kick_callback)
 	return
 }
 func (e *app) listenRedis() <-chan error {
@@ -70,17 +112,20 @@ func (e *app) listenRedis() <-chan error {
 		for {
 			switch v := e.psc.Receive().(type) {
 			case redis.Message:
-				var p Payload
+				var payload Payload
 				if f, ok := e.events[v.Channel]; ok {
-					p = f(v.Data)
+					p, err := f(v.Data)
+					if err != nil {
+						continue
+					}
+					payload = p
 				} else {
-					p = v.Data
+					payload = v.Data
 				}
-				e.broadcast <- Message{v.Channel, p}
+				e.broadcast <- Message{v.Channel, payload}
 
 			case error:
 				errChan <- v
-				close(errChan)
 				break
 			}
 		}
@@ -105,7 +150,6 @@ func (e *app) listenClients() chan int {
 				for c, _ := range e.clients {
 					e.leave <- c
 				}
-				close(stop)
 				break
 			}
 		}
@@ -116,11 +160,6 @@ func (e *app) listenClients() chan int {
 func (e *app) Listen() error {
 	redisErr := e.listenRedis()
 	clientsStop := e.listenClients()
-	defer func() {
-		close(e.join)
-		close(e.leave)
-		close(e.broadcast)
-	}()
 	select {
 	case e := <-redisErr:
 		clientsStop <- 1
@@ -128,7 +167,10 @@ func (e *app) Listen() error {
 	}
 }
 
-func (e *app) On(event string, f func(data Payload) Payload) (err error) {
+func (e *app) Count() int {
+	return len(e.clients)
+}
+func (e *app) On(event string, f EventCallback) (err error) {
 	err = e.psc.Subscribe(event)
 	e.Lock()
 	e.events[event] = f
@@ -137,7 +179,7 @@ func (e *app) On(event string, f func(data Payload) Payload) (err error) {
 	return
 }
 func (e *app) Emit(event string, data Payload) (err error) {
-	err = e.conn.Send("PUBLISH", event, data)
-	err = e.conn.Flush()
+	_, err = e.rpool.Get().Do("PUBLISH", event, string(data))
+	err = e.rpool.Get().Flush()
 	return
 }

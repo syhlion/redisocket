@@ -1,52 +1,30 @@
 package redisocket
 
 import (
-	"net/http"
+	"errors"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
-const (
-	writeWait      = 10 * time.Second
-	pongWait       = 60 * time.Second
-	pingPeriod     = (pongWait * 9) / 10
-	maxMessageSize = 512
-)
-
-var Upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin:     func(r *http.Request) bool { return true },
-}
-
-type Payload []byte
-
-type MessageParser interface {
-	Parse([]byte) Message
-}
-type Message struct {
-	Event   string
-	Payload Payload
-}
-type Client interface {
-	GetUUID() string
-	GetTag() string
-	EventHandler
-}
 type client struct {
 	ws   *websocket.Conn
 	send chan Message
 	uuid string
 	tag  string
 	*sync.RWMutex
-	events map[string]func(data Payload) Payload
+	events map[string]EventCallback
 	MessageParser
 	app *app
 }
 
-func (c *client) On(event string, f func(data Payload) Payload) (err error) {
+func default_kick_callback(data Payload) (p Payload, err error) {
+
+	return data, err
+}
+
+func (c *client) On(event string, f EventCallback) (err error) {
 	c.Lock()
 	c.events[event] = f
 	c.Unlock()
@@ -87,8 +65,11 @@ func (c *client) readPump() <-chan error {
 			if msgType != websocket.TextMessage {
 				continue
 			}
-			m := c.Parse(data)
-			c.send <- m
+			err = c.Parse(c, data)
+			if err != nil {
+				errChan <- err
+				break
+			}
 		}
 	}()
 	return errChan
@@ -99,6 +80,17 @@ func (c *client) Listen() (err error) {
 	writeErr := c.writePump()
 	readErr := c.readPump()
 	c.app.join <- c
+	defer func() {
+		c.ws.Close()
+		c.app.leave <- c
+	}()
+	//	err = c.app.conn.Send("SADD", c.tag, c.uuid)
+	//	if err != nil {
+	//		return
+	//	}
+	//	defer func() {
+	//		c.app.conn.Send("SREM", c.tag, c.uuid)
+	//	}()
 	select {
 	case e := <-writeErr:
 		return e
@@ -124,13 +116,21 @@ func (c *client) writePump() <-chan error {
 				}
 				var payload Payload
 				if f, ok := c.events[msg.Event]; ok {
-					payload = f(msg.Payload)
+					p, err := f(msg.Payload)
+					if err != nil {
+						continue
+					}
+					payload = p
 				} else {
 					payload = msg.Payload
 				}
 				if err := c.write(websocket.TextMessage, payload); err != nil {
 					errChan <- err
 					close(errChan)
+					return
+				}
+				if msg.Event == EVENT_KICK {
+					errChan <- errors.New(EVENT_KICK)
 					return
 				}
 

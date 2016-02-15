@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 
@@ -9,20 +10,20 @@ import (
 
 type TestParser struct{ redisocket.App }
 
-func (t *TestParser) Parse(e redisocket.EventHandler, data []byte) (err error) {
+func (t *TestParser) Receive(e redisocket.Client, msg redisocket.Message) (err error) {
 	//e.Emit("message", data)
-	t.App.Emit("message", data)
+	t.App.Emit(msg)
+	fmt.Println(msg)
 	return err
 
 }
 
 func main() {
 	app := redisocket.NewApp(":6379")
-	err := app.On("message", func(data redisocket.Payload) (p redisocket.Payload, err error) {
-		a := string(data) + "****bb"
-		p = []byte(a)
+	err := app.On("message", func(msg redisocket.Message) (m redisocket.Message, err error) {
+		a := msg.Payload.(string) + "****bb"
 
-		println(string(p))
+		println(string(a))
 		return
 	})
 
@@ -34,7 +35,7 @@ func main() {
 
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 
-		c, err := app.NewClient("test", t, w, r)
+		c, err := app.NewClient(t, w, r)
 		if err != nil {
 			log.Fatal("Client Connect Error")
 			return
@@ -46,7 +47,13 @@ func main() {
 
 	http.HandleFunc("/kick", func(w http.ResponseWriter, r *http.Request) {
 
-		app.Emit(redisocket.EVENT_KICK, []byte("kick"))
+		m := redisocket.Message{
+			From:    "admin",
+			To:      "",
+			Payload: "kick",
+			Event:   redisocket.EVENT_KICK,
+		}
+		app.Emit(m)
 		w.WriteHeader(200)
 		w.Write([]byte("ok"))
 		return

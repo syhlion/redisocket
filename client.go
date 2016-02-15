@@ -12,40 +12,40 @@ type client struct {
 	ws   *websocket.Conn
 	send chan Message
 	uuid string
-	tag  string
 	*sync.RWMutex
-	events map[string]EventCallback
-	MessageParser
+	events map[string]MsgCallback
+	Receiver
 	app *app
 }
 
-func default_kick_callback(data Payload) (p Payload, err error) {
+func default_kick_callback(msg Message) (m Message, err error) {
 
-	return data, err
+	return msg, err
 }
 
-func (c *client) On(event string, f EventCallback) (err error) {
+func (c *client) On(event string, f MsgCallback) (err error) {
 	c.Lock()
 	c.events[event] = f
 	c.Unlock()
 	return
 
 }
-func (c *client) Emit(event string, data Payload) (err error) {
-	c.send <- Message{event, data}
+func (c *client) Emit(msg Message) (err error) {
+	c.send <- msg
 	return
 }
 
 func (c *client) GetUUID() string {
 	return c.uuid
 }
-func (c *client) GetTag() string {
-	return c.tag
-}
 
-func (c *client) write(msgType int, msg []byte) error {
+func (c *client) write(msgType int, data []byte) error {
 	c.ws.SetWriteDeadline(time.Now().Add(writeWait))
-	return c.ws.WriteMessage(msgType, msg)
+	return c.ws.WriteMessage(msgType, data)
+}
+func (c *client) writeJson(msg Message) error {
+	c.ws.SetWriteDeadline(time.Now().Add(writeWait))
+	return c.ws.WriteJSON(msg)
 }
 
 func (c *client) readPump() <-chan error {
@@ -56,16 +56,16 @@ func (c *client) readPump() <-chan error {
 		c.ws.SetReadDeadline(time.Now().Add(pongWait))
 		c.ws.SetPongHandler(func(string) error { c.ws.SetReadDeadline(time.Now().Add(pongWait)); return nil })
 		for {
-			msgType, data, err := c.ws.ReadMessage()
+
+			m := &Message{}
+			err := c.ws.ReadJSON(m)
 			if err != nil {
 				errChan <- err
 				close(errChan)
 				return
 			}
-			if msgType != websocket.TextMessage {
-				continue
-			}
-			err = c.Parse(c, data)
+
+			err = c.Receive(c, *m)
 			if err != nil {
 				errChan <- err
 				break
@@ -114,17 +114,14 @@ func (c *client) writePump() <-chan error {
 					close(errChan)
 					return
 				}
-				var payload Payload
 				if f, ok := c.events[msg.Event]; ok {
-					p, err := f(msg.Payload)
+					m, err := f(msg)
 					if err != nil {
 						continue
 					}
-					payload = p
-				} else {
-					payload = msg.Payload
+					msg = m
 				}
-				if err := c.write(websocket.TextMessage, payload); err != nil {
+				if err := c.writeJson(msg); err != nil {
 					errChan <- err
 					close(errChan)
 					return

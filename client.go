@@ -56,16 +56,17 @@ func (c *client) readPump() <-chan error {
 		c.ws.SetReadDeadline(time.Now().Add(pongWait))
 		c.ws.SetPongHandler(func(string) error { c.ws.SetReadDeadline(time.Now().Add(pongWait)); return nil })
 		for {
-
-			m := &Message{}
-			err := c.ws.ReadJSON(m)
+			msgType, data, err := c.ws.ReadMessage()
 			if err != nil {
 				errChan <- err
 				close(errChan)
 				return
 			}
+			if msgType != websocket.TextMessage {
+				continue
+			}
 
-			err = c.Receive(c, *m)
+			err = c.Receive(c, data)
 			if err != nil {
 				errChan <- err
 				break

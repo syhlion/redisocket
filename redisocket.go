@@ -30,7 +30,7 @@ var Upgrader = websocket.Upgrader{
 type Payload []byte
 
 type Receiver interface {
-	Receive(c Client, msg Message) error
+	Receive(c Client, data []byte) error
 }
 type Message struct {
 	From    string
@@ -52,7 +52,6 @@ type MsgHandler interface {
 
 type App interface {
 	NewClient(m Receiver, w http.ResponseWriter, r *http.Request) (Client, error)
-	Kick(uuid string)
 	Count() int
 	MsgHandler
 }
@@ -182,13 +181,6 @@ func (e *app) Listen() error {
 		clientsStop <- 1
 		return e
 	}
-}
-func (e *app) Kick(uuid string) {
-	m := Message{
-		To:    uuid,
-		Event: "EVENT_KICK",
-	}
-	e.Emit(m)
 }
 
 func (e *app) Count() int {

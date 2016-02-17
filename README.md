@@ -6,7 +6,7 @@ Implement By Observer pattern
 
 ## Install
 
-go get github.com/syhlion/redisocket
+`go get github.com/syhlion/redisocket`
 
 ## Useged
 

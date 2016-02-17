@@ -1,13 +1,16 @@
-package main
+# Redisocket
 
-import (
-	"fmt"
-	"log"
-	"net/http"
+Base on gorilla/websocket & garyburd/redigo
 
-	"github.com/syhlion/redisocket"
-)
+Implement By Observer pattern
 
+## Install
+
+go get github.com/syhlion/redisocket
+
+## Useged
+
+``` go
 type ClientMessageHandler struct{ redisocket.App }
 
 func (t *ClientMessageHandler) AfterReadStream(e redisocket.Subscriber, d []byte) (err error) {
@@ -34,19 +37,10 @@ func main() {
 			log.Fatal("Client Connect Error")
 			return
 		}
-		app.Subscribe("channel1", c)
-		err = c.Listen()
-		log.Println(err, "http point")
-		return
-	})
-	http.HandleFunc("/ws2", func(w http.ResponseWriter, r *http.Request) {
 
-		c, err := app.NewClient(t, w, r)
-		if err != nil {
-			log.Fatal("Client Connect Error")
-			return
-		}
-		app.Subscribe("channel2", c)
+		// It can subscribe many subject 
+		//ex app.Subscribe("channel2",c)...etc
+		app.Subscribe("channel1", c)
 		err = c.Listen()
 		log.Println(err, "http point")
 		return
@@ -54,3 +48,4 @@ func main() {
 
 	log.Fatal(http.ListenAndServe(":8888", nil))
 }
+```

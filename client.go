@@ -58,8 +58,7 @@ func (c *client) readPump() <-chan error {
 
 }
 func (c *client) Close() {
-	c.app.UnsubAllEvent(c)
-	c.app.leave <- c
+	c.app.UnsubscribeAll(c)
 	c.ws.Close()
 	return
 }
@@ -67,7 +66,6 @@ func (c *client) Close() {
 func (c *client) Listen() (err error) {
 	writeErr := c.writePump()
 	readErr := c.readPump()
-	c.app.join <- c
 	defer func() {
 		c.Close()
 	}()

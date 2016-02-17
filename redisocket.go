@@ -16,7 +16,6 @@ const (
 	pongWait       = 60 * time.Second
 	pingPeriod     = (pongWait * 9) / 10
 	maxMessageSize = 512
-	EVENT_KICK     = "EVENT_KICK"
 )
 
 var conn redis.Conn
@@ -26,40 +25,51 @@ var Upgrader = websocket.Upgrader{
 	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
-//MsgHandler 每個連線的收到的訊息跟送出訊息的處理器
-//
-// Receive 接收每個從 websocket進來的訊息
-//
-// Send 寫入給每個 websocket stream
+//MsgHandler Handle client i/o message
 type MsgHandler interface {
-	AfterReadStream(self Observer, data []byte) error
-	BeforeWriteStream(self Observer, data []byte) ([]byte, error)
+
+	//AfterReadStream
+	AfterReadStream(self Subscriber, data []byte) error
+	//BeforeWriteStream
+	BeforeWriteStream(self Subscriber, data []byte) ([]byte, error)
 }
 
-//Message
-type Message struct {
-	From    string
-	Event   string
-	To      string
-	Payload interface{}
-}
-
-type Observer interface {
+//Subscriber
+type Subscriber interface {
+	//Get uuid
 	Uuid() string
+
+	//Clients start listen. It's blocked
 	Listen() error
+
+	//Close clients connection
 	Close()
+
+	//When the subscribe subject update. App can Notify Subscriber
 	Update(data []byte)
 }
 
 type App interface {
-	NewClient(m MsgHandler, w http.ResponseWriter, r *http.Request) (Observer, error)
-	Sub(event string, c Observer) error
-	Unsub(event string, c Observer) error
+	// It client's Producer
+	NewClient(m MsgHandler, w http.ResponseWriter, r *http.Request) (Subscriber, error)
+
+	//A Subscriber can subscribe subject
+	Subscribe(event string, c Subscriber) error
+
+	//A Subscriber can  unsubscribe subject
+	Unsubscribe(event string, c Subscriber) error
+
+	//It can notify subscriber
 	Notify(event string, data []byte) error
-	UnsubAllEvent(c Observer)
+
+	//A subscriber can cancel all subscriptions
+	UnsubscribeAll(c Subscriber)
+
+	//App start listen. It's blocked
 	Listen() error
 }
 
+//NewApp It's create a App
 func NewApp(address string) App {
 	pool := redis.NewPool(func() (redis.Conn, error) {
 
@@ -67,18 +77,16 @@ func NewApp(address string) App {
 
 	}, 5)
 	e := &app{
-		rpool:     pool,
-		psc:       &redis.PubSubConn{pool.Get()},
-		RWMutex:   new(sync.RWMutex),
-		events:    make(map[string]map[Observer]bool),
-		observers: make(map[Observer]map[string]bool),
-		join:      make(chan Observer, 1024),
-		leave:     make(chan Observer, 1024),
+		rpool:       pool,
+		psc:         &redis.PubSubConn{pool.Get()},
+		RWMutex:     new(sync.RWMutex),
+		events:      make(map[string]map[Subscriber]bool),
+		subscribers: make(map[Subscriber]map[string]bool),
 	}
 
 	return e
 }
-func (e *app) NewClient(m MsgHandler, w http.ResponseWriter, r *http.Request) (c Observer, err error) {
+func (e *app) NewClient(m MsgHandler, w http.ResponseWriter, r *http.Request) (c Subscriber, err error) {
 	ws, err := Upgrader.Upgrade(w, r, nil)
 	out, err := exec.Command("uuidgen").Output()
 	if err != nil {
@@ -97,17 +105,15 @@ func (e *app) NewClient(m MsgHandler, w http.ResponseWriter, r *http.Request) (c
 }
 
 type app struct {
-	psc       *redis.PubSubConn
-	conn      redis.Conn
-	rpool     *redis.Pool
-	events    map[string]map[Observer]bool
-	observers map[Observer]map[string]bool
-	join      chan Observer
-	leave     chan Observer
+	psc         *redis.PubSubConn
+	conn        redis.Conn
+	rpool       *redis.Pool
+	events      map[string]map[Subscriber]bool
+	subscribers map[Subscriber]map[string]bool
 	*sync.RWMutex
 }
 
-func (a *app) Sub(event string, c Observer) (err error) {
+func (a *app) Subscribe(event string, c Subscriber) (err error) {
 	err = a.psc.Subscribe(event)
 	if err != nil {
 		return
@@ -115,30 +121,30 @@ func (a *app) Sub(event string, c Observer) (err error) {
 	a.Lock()
 
 	//observer map
-	if m, ok := a.observers[c]; ok {
+	if m, ok := a.subscribers[c]; ok {
 		m[event] = true
 	} else {
 		events := make(map[string]bool)
 		events[event] = true
-		a.observers[c] = events
+		a.subscribers[c] = events
 	}
 
 	//event map
 	if m, ok := a.events[event]; ok {
 		m[c] = true
 	} else {
-		clients := make(map[Observer]bool)
+		clients := make(map[Subscriber]bool)
 		clients[c] = true
 		a.events[event] = clients
 	}
 	a.Unlock()
 	return
 }
-func (a *app) Unsub(event string, c Observer) (err error) {
+func (a *app) Unsubscribe(event string, c Subscriber) (err error) {
 	a.Lock()
 
 	//observer map
-	if m, ok := a.observers[c]; ok {
+	if m, ok := a.subscribers[c]; ok {
 		delete(m, event)
 	}
 	//event map
@@ -155,13 +161,13 @@ func (a *app) Unsub(event string, c Observer) (err error) {
 
 	return
 }
-func (a *app) UnsubAllEvent(c Observer) {
+func (a *app) UnsubscribeAll(c Subscriber) {
 	a.Lock()
-	if m, ok := a.observers[c]; ok {
+	if m, ok := a.subscribers[c]; ok {
 		for e, _ := range m {
 			delete(a.events[e], c)
 		}
-		delete(a.observers, c)
+		delete(a.subscribers, c)
 	}
 	a.Unlock()
 	return
@@ -183,8 +189,8 @@ func (a *app) listenRedis() <-chan error {
 			case error:
 				errChan <- v
 
-				for c, _ := range a.observers {
-					a.UnsubAllEvent(c)
+				for c, _ := range a.subscribers {
+					a.UnsubscribeAll(c)
 					c.Close()
 				}
 				break

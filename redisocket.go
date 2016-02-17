@@ -1,7 +1,6 @@
 package redisocket
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -27,46 +26,38 @@ var Upgrader = websocket.Upgrader{
 	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
-type Payload []byte
-
-type Receiver interface {
-	Receive(c Client, data []byte) error
+//MsgHandler 每個連線的收到的訊息跟送出訊息的處理器
+//
+// Receive 接收每個從 websocket進來的訊息
+//
+// Send 寫入給每個 websocket stream
+type MsgHandler interface {
+	Receive(self Observer, data []byte) error
+	Send(data []byte) ([]byte, error)
 }
+
+//Message
 type Message struct {
 	From    string
 	Event   string
 	To      string
 	Payload interface{}
 }
-type Client interface {
-	GetUUID() string
-	MsgHandler
-}
-type MsgCallback func(msg Message) (m Message, e error)
 
-type MsgHandler interface {
-	Listen() (err error)
-	On(msgType string, f MsgCallback) error
-	Emit(msg Message) error
+type Observer interface {
+	Uuid() string
+	Listen() error
+	Close()
+	Notify(data []byte)
 }
 
 type App interface {
-	NewClient(m Receiver, w http.ResponseWriter, r *http.Request) (Client, error)
-	Count() int
-	MsgHandler
-}
-type app struct {
-	psc         *redis.PubSubConn
-	conn        redis.Conn
-	rpool       *redis.Pool
-	events      map[string]MsgCallback
-	clients     map[Client]bool
-	clients_map map[string]Client
-	join        chan Client
-	leave       chan Client
-	broadcast   chan Message
-	kick        chan Message
-	*sync.RWMutex
+	NewClient(m MsgHandler, w http.ResponseWriter, r *http.Request) (Observer, error)
+	Sub(event string, c Observer) error
+	Unsub(event string, c Observer) error
+	Emit(event string, data []byte) error
+	UnsubAllEvent(c Observer)
+	Listen() error
 }
 
 func NewApp(address string) App {
@@ -76,22 +67,18 @@ func NewApp(address string) App {
 
 	}, 5)
 	e := &app{
-		rpool:       pool,
-		psc:         &redis.PubSubConn{pool.Get()},
-		events:      make(map[string]MsgCallback),
-		clients:     make(map[Client]bool),
-		clients_map: make(map[string]Client),
-		RWMutex:     new(sync.RWMutex),
-		join:        make(chan Client, 1024),
-		leave:       make(chan Client, 1024),
-		broadcast:   make(chan Message, 1024),
-		kick:        make(chan Message, 1024),
+		rpool:     pool,
+		psc:       &redis.PubSubConn{pool.Get()},
+		RWMutex:   new(sync.RWMutex),
+		events:    make(map[string]map[Observer]bool),
+		observers: make(map[Observer]map[string]bool),
+		join:      make(chan Observer, 1024),
+		leave:     make(chan Observer, 1024),
 	}
-	e.On(EVENT_KICK, default_kick_callback)
 
 	return e
 }
-func (e *app) NewClient(m Receiver, w http.ResponseWriter, r *http.Request) (c Client, err error) {
+func (e *app) NewClient(m MsgHandler, w http.ResponseWriter, r *http.Request) (c Observer, err error) {
 	ws, err := Upgrader.Upgrade(w, r, nil)
 	out, err := exec.Command("uuidgen").Output()
 	if err != nil {
@@ -99,108 +86,124 @@ func (e *app) NewClient(m Receiver, w http.ResponseWriter, r *http.Request) (c C
 	}
 	uuid := fmt.Sprintf("%s", out)
 	c = &client{
-		ws:       ws,
-		send:     make(chan Message, 4096),
-		events:   make(map[string]MsgCallback),
-		RWMutex:  new(sync.RWMutex),
-		uuid:     uuid,
-		Receiver: m,
-		app:      e,
+		ws:         ws,
+		send:       make(chan []byte, 4096),
+		RWMutex:    new(sync.RWMutex),
+		uuid:       uuid,
+		MsgHandler: m,
+		app:        e,
 	}
-	c.On(EVENT_KICK, default_kick_callback)
 	return
 }
-func (e *app) listenRedis() <-chan error {
+
+type app struct {
+	psc       *redis.PubSubConn
+	conn      redis.Conn
+	rpool     *redis.Pool
+	events    map[string]map[Observer]bool
+	observers map[Observer]map[string]bool
+	join      chan Observer
+	leave     chan Observer
+	*sync.RWMutex
+}
+
+func (a *app) Sub(event string, c Observer) (err error) {
+	err = a.psc.Subscribe(event)
+	if err != nil {
+		return
+	}
+	a.Lock()
+
+	//observer map
+	if m, ok := a.observers[c]; ok {
+		m[event] = true
+	} else {
+		events := make(map[string]bool)
+		events[event] = true
+		a.observers[c] = events
+	}
+
+	//event map
+	if m, ok := a.events[event]; ok {
+		m[c] = true
+	} else {
+		clients := make(map[Observer]bool)
+		clients[c] = true
+		a.events[event] = clients
+	}
+	a.Unlock()
+	return
+}
+func (a *app) Unsub(event string, c Observer) (err error) {
+	a.Lock()
+
+	//observer map
+	if m, ok := a.observers[c]; ok {
+		delete(m, event)
+	}
+	//event map
+	if m, ok := a.events[event]; ok {
+		delete(m, c)
+		if len(m) == 0 {
+			err = a.psc.Unsubscribe(event)
+			if err != nil {
+				return
+			}
+		}
+	}
+	a.Unlock()
+
+	return
+}
+func (a *app) UnsubAllEvent(c Observer) {
+	a.Lock()
+	if m, ok := a.observers[c]; ok {
+		for e, _ := range m {
+			delete(a.events[e], c)
+		}
+		delete(a.observers, c)
+	}
+	a.Unlock()
+	return
+}
+func (a *app) listenRedis() <-chan error {
+
 	errChan := make(chan error)
 	go func() {
 		for {
-			switch v := e.psc.Receive().(type) {
+			switch v := a.psc.Receive().(type) {
 			case redis.Message:
-				m := &Message{}
-				err := json.Unmarshal(v.Data, m)
-				if err != nil {
-					continue
-				}
-				msg := *m
-				if f, ok := e.events[msg.Event]; ok {
-					m, err := f(msg)
-					if err != nil {
-						continue
-					}
-					msg = m
-				}
-				if msg.To == "" {
-
-					e.broadcast <- msg
-				} else {
-					if c, ok := e.clients_map[msg.To]; ok {
-						c.Emit(msg)
-					}
+				a.RLock()
+				clients := a.events[v.Channel]
+				a.RUnlock()
+				fmt.Println("test")
+				for c, _ := range clients {
+					c.Notify(v.Data)
 				}
 
 			case error:
 				errChan <- v
+
+				for c, _ := range a.observers {
+					a.UnsubAllEvent(c)
+					c.Close()
+				}
 				break
 			}
 		}
 	}()
 	return errChan
 }
-func (e *app) listenClients() chan int {
-
-	stop := make(chan int)
-	go func() {
-		for {
-			select {
-			case c := <-e.join:
-				e.clients[c] = true
-				e.clients_map[c.GetUUID()] = c
-			case c := <-e.leave:
-				delete(e.clients, c)
-				delete(e.clients_map, c.GetUUID())
-			case s := <-e.broadcast:
-				for c, _ := range e.clients {
-					c.Emit(s)
-				}
-			case <-stop:
-				for c, _ := range e.clients {
-					e.leave <- c
-				}
-				break
-			}
-		}
-	}()
-	return stop
-}
-
-func (e *app) Listen() error {
-	redisErr := e.listenRedis()
-	clientsStop := e.listenClients()
+func (a *app) Listen() error {
+	redisErr := a.listenRedis()
 	select {
 	case e := <-redisErr:
-		clientsStop <- 1
 		return e
 	}
 }
+func (e *app) Emit(event string, data []byte) (err error) {
 
-func (e *app) Count() int {
-	return len(e.clients)
-}
-func (e *app) On(event string, f MsgCallback) (err error) {
-	err = e.psc.Subscribe(event)
-	e.Lock()
-	e.events[event] = f
-	e.Unlock()
-
-	return
-}
-func (e *app) Emit(msg Message) (err error) {
-	m, err := json.Marshal(msg)
-	if err != nil {
-		return
-	}
-
-	_, err = e.rpool.Get().Do("PUBLISH", msg.Event, m)
+	_, err = e.rpool.Get().Do("PUBLISH", event, data)
 	err = e.rpool.Get().Flush()
 	return
 }

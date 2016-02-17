@@ -8,16 +8,16 @@ import (
 	"github.com/syhlion/redisocket"
 )
 
-type TestParser struct{ redisocket.App }
+type ClientMessageHandler struct{ redisocket.App }
 
-func (t *TestParser) Receive(e redisocket.Observer, d []byte) (err error) {
+func (t *ClientMessageHandler) Receive(e redisocket.Observer, d []byte) (err error) {
 	t.App.Emit("channel1", d)
 
 	fmt.Println(string(d))
 	return err
 
 }
-func (t *TestParser) Send(data []byte) (d []byte, e error) {
+func (t *ClientMessageHandler) Send(data []byte) (d []byte, e error) {
 	return data, nil
 }
 
@@ -25,7 +25,7 @@ func main() {
 	app := redisocket.NewApp(":6379")
 
 	go app.Listen()
-	t := &TestParser{app}
+	t := &ClientMessageHandler{app}
 
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 

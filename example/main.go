@@ -11,7 +11,7 @@ import (
 type ClientMessageHandler struct{ redisocket.App }
 
 func (t *ClientMessageHandler) Receive(e redisocket.Observer, d []byte) (err error) {
-	t.App.Emit("channel1", d)
+	t.App.Notify("channel1", d)
 
 	fmt.Println(string(d))
 	return err

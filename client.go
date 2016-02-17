@@ -20,7 +20,7 @@ func (c *client) Uuid() string {
 	return c.uuid
 }
 
-func (c *client) Notify(data []byte) {
+func (c *client) Update(data []byte) {
 	c.send <- data
 }
 
@@ -47,7 +47,7 @@ func (c *client) readPump() <-chan error {
 				continue
 			}
 
-			err = c.Receive(c, data)
+			err = c.AfterReadStream(c, data)
 			if err != nil {
 				errChan <- err
 				break
@@ -94,7 +94,7 @@ func (c *client) writePump() <-chan error {
 					close(errChan)
 					return
 				}
-				msg, err := c.Send(msg)
+				msg, err := c.BeforeWriteStream(c, msg)
 				if err != nil {
 					continue
 				}

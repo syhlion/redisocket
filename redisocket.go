@@ -32,8 +32,8 @@ var Upgrader = websocket.Upgrader{
 //
 // Send 寫入給每個 websocket stream
 type MsgHandler interface {
-	Receive(self Observer, data []byte) error
-	Send(data []byte) ([]byte, error)
+	AfterReadStream(self Observer, data []byte) error
+	BeforeWriteStream(self Observer, data []byte) ([]byte, error)
 }
 
 //Message
@@ -48,14 +48,14 @@ type Observer interface {
 	Uuid() string
 	Listen() error
 	Close()
-	Notify(data []byte)
+	Update(data []byte)
 }
 
 type App interface {
 	NewClient(m MsgHandler, w http.ResponseWriter, r *http.Request) (Observer, error)
 	Sub(event string, c Observer) error
 	Unsub(event string, c Observer) error
-	Emit(event string, data []byte) error
+	Notify(event string, data []byte) error
 	UnsubAllEvent(c Observer)
 	Listen() error
 }
@@ -176,9 +176,8 @@ func (a *app) listenRedis() <-chan error {
 				a.RLock()
 				clients := a.events[v.Channel]
 				a.RUnlock()
-				fmt.Println("test")
 				for c, _ := range clients {
-					c.Notify(v.Data)
+					c.Update(v.Data)
 				}
 
 			case error:
@@ -201,7 +200,7 @@ func (a *app) Listen() error {
 		return e
 	}
 }
-func (e *app) Emit(event string, data []byte) (err error) {
+func (e *app) Notify(event string, data []byte) (err error) {
 
 	_, err = e.rpool.Get().Do("PUBLISH", event, data)
 	err = e.rpool.Get().Flush()

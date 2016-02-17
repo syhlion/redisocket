@@ -1,7 +1,6 @@
 package redisocket
 
 import (
-	"errors"
 	"sync"
 	"time"
 
@@ -10,42 +9,24 @@ import (
 
 type client struct {
 	ws   *websocket.Conn
-	send chan Message
+	send chan []byte
 	uuid string
 	*sync.RWMutex
-	events map[string]MsgCallback
-	Receiver
+	MsgHandler
 	app *app
 }
 
-func default_kick_callback(msg Message) (m Message, err error) {
-
-	return msg, err
-}
-
-func (c *client) On(event string, f MsgCallback) (err error) {
-	c.Lock()
-	c.events[event] = f
-	c.Unlock()
-	return
-
-}
-func (c *client) Emit(msg Message) (err error) {
-	c.send <- msg
-	return
-}
-
-func (c *client) GetUUID() string {
+func (c *client) Uuid() string {
 	return c.uuid
+}
+
+func (c *client) Notify(data []byte) {
+	c.send <- data
 }
 
 func (c *client) write(msgType int, data []byte) error {
 	c.ws.SetWriteDeadline(time.Now().Add(writeWait))
 	return c.ws.WriteMessage(msgType, data)
-}
-func (c *client) writeJson(msg Message) error {
-	c.ws.SetWriteDeadline(time.Now().Add(writeWait))
-	return c.ws.WriteJSON(msg)
 }
 
 func (c *client) readPump() <-chan error {
@@ -76,22 +57,20 @@ func (c *client) readPump() <-chan error {
 	return errChan
 
 }
+func (c *client) Close() {
+	c.app.UnsubAllEvent(c)
+	c.app.leave <- c
+	c.ws.Close()
+	return
+}
 
 func (c *client) Listen() (err error) {
 	writeErr := c.writePump()
 	readErr := c.readPump()
 	c.app.join <- c
 	defer func() {
-		c.ws.Close()
-		c.app.leave <- c
+		c.Close()
 	}()
-	//	err = c.app.conn.Send("SADD", c.tag, c.uuid)
-	//	if err != nil {
-	//		return
-	//	}
-	//	defer func() {
-	//		c.app.conn.Send("SREM", c.tag, c.uuid)
-	//	}()
 	select {
 	case e := <-writeErr:
 		return e
@@ -115,20 +94,14 @@ func (c *client) writePump() <-chan error {
 					close(errChan)
 					return
 				}
-				if f, ok := c.events[msg.Event]; ok {
-					m, err := f(msg)
-					if err != nil {
-						continue
-					}
-					msg = m
+				msg, err := c.Send(msg)
+				if err != nil {
+					continue
 				}
-				if err := c.writeJson(msg); err != nil {
+
+				if err := c.write(websocket.TextMessage, msg); err != nil {
 					errChan <- err
 					close(errChan)
-					return
-				}
-				if msg.Event == EVENT_KICK {
-					errChan <- errors.New(EVENT_KICK)
 					return
 				}
 

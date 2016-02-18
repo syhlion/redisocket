@@ -1,4 +1,5 @@
 # Redisocket
+[![Build Status](https://travis-ci.org/syhlion/redisocket.svg?branch=master)](https://travis-ci.org/syhlion/redisocket)
 
 Base on gorilla/websocket & garyburd/redigo
 

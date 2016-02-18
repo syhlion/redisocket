@@ -4,7 +4,7 @@ import "testing"
 
 var a *app
 
-var clients [3]Subscriber
+var clients [3]*mclient
 
 func init() {
 	b := NewApp(":6379")
@@ -16,7 +16,7 @@ func init() {
 }
 
 type mclient struct {
-	receivecCount int
+	receive []byte
 }
 
 func (m *mclient) Uuid() string {
@@ -32,10 +32,10 @@ func (m *mclient) Close() {
 }
 
 func (m *mclient) Update(data []byte) {
-	m.receivecCount++
+	m.receive = data
 	return
 }
-func mockClient() Subscriber {
+func mockClient() *mclient {
 	return &mclient{}
 }
 
@@ -87,11 +87,45 @@ func TestSubscribe(t *testing.T) {
 }
 
 func TestUnsubscribe(t *testing.T) {
+	a.Unsubscribe("channel1", clients[0])
+
+	if e, ok := a.events["channel1"]; ok {
+		if _, ok := e[clients[0]]; ok {
+			t.Error("c1 no Unsubscribe channel1")
+		}
+	} else {
+
+		t.Error("NO channel1")
+	}
+	a.Subscribe("channel1", clients[0])
 
 }
 
 func TestUnsubscribeAll(t *testing.T) {
+	a.UnsubscribeAll(clients[0])
+	if e, ok := a.events["channel2"]; ok {
+		if _, ok := e[clients[0]]; ok {
+			t.Error("c1 no Unsubscribe channel1")
+		}
+	} else {
+
+		t.Error("No channel2")
+	}
+	a.Subscribe("channel1", clients[0])
+	a.Subscribe("channel2", clients[0])
+	a.Subscribe("channel3", clients[0])
 }
 
 func TestNotify(t *testing.T) {
+	a.Notify("channel1", []byte("Hello"))
+
+	if string(clients[0].receive) != "Hello" {
+		t.Error("c1 no recevie notify")
+	}
+	if string(clients[1].receive) != "Hello" {
+		t.Error("c2 no recevie notify")
+	}
+	if string(clients[2].receive) != "Hello" {
+		t.Error("c3 no recevie notify")
+	}
 }

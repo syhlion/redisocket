@@ -5,6 +5,11 @@ Base on gorilla/websocket & garyburd/redigo
 
 Implement By Observer pattern
 
+## Documention
+
+* [API Reference](https://godoc.org/github.com/syhlion/redisocket)
+* [Sample Example](https://github.com/syhlion/redisocket/blob/master/example/main.go)
+
 ## Install
 
 `go get github.com/syhlion/redisocket`

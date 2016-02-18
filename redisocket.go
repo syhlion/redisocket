@@ -70,15 +70,11 @@ type App interface {
 }
 
 //NewApp It's create a App
-func NewApp(address string) App {
-	pool := redis.NewPool(func() (redis.Conn, error) {
-
-		return redis.Dial("tcp", address)
-
-	}, 5)
+func NewApp(p *redis.Pool) App {
 	e := &app{
-		rpool:       pool,
-		psc:         &redis.PubSubConn{pool.Get()},
+
+		rpool:       p,
+		psc:         &redis.PubSubConn{p.Get()},
 		RWMutex:     new(sync.RWMutex),
 		events:      make(map[string]map[Subscriber]bool),
 		subscribers: make(map[Subscriber]map[string]bool),

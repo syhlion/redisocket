@@ -31,7 +31,12 @@ func (t *ClientMessageHandler) BeforeWriteStream(sub redisocket.Subscriber, data
 }
 
 func main() {
-	app := redisocket.NewApp(":6379")
+    //use redisgo package
+
+    pool:=redis.NewPool(func()(redis.Conn,error){
+        return redis.Dial("tcp", ":6379")
+    },5)
+	app := redisocket.NewApp(pool)
 
 	go app.Listen()
 	t := &ClientMessageHandler{app}

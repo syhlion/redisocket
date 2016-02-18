@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/garyburd/redigo/redis"
 	"github.com/syhlion/redisocket"
 )
 
@@ -22,7 +23,10 @@ func (t *ClientMessageHandler) BeforeWriteStream(sub redisocket.Subscriber, data
 }
 
 func main() {
-	app := redisocket.NewApp(":6379")
+	pool := redis.NewPool(func() (redis.Conn, error) {
+		return redis.Dial("tcp", ":6379")
+	}, 5)
+	app := redisocket.NewApp(pool)
 
 	go app.Listen()
 	t := &ClientMessageHandler{app}

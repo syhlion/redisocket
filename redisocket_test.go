@@ -115,17 +115,3 @@ func TestUnsubscribeAll(t *testing.T) {
 	a.Subscribe("channel2", clients[0])
 	a.Subscribe("channel3", clients[0])
 }
-
-func TestNotify(t *testing.T) {
-	a.Notify("channel1", []byte("Hello"))
-
-	if string(clients[0].receive) != "Hello" {
-		t.Error("c1 no recevie notify")
-	}
-	if string(clients[1].receive) != "Hello" {
-		t.Error("c2 no recevie notify")
-	}
-	if string(clients[2].receive) != "Hello" {
-		t.Error("c3 no recevie notify")
-	}
-}

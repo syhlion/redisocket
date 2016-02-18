@@ -1,13 +1,20 @@
 package redisocket
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/garyburd/redigo/redis"
+)
 
 var a *app
 
 var clients [3]*mclient
 
 func init() {
-	b := NewApp(":6379")
+	pool := redis.NewPool(func() (redis.Conn, error) {
+		return redis.Dial("tcp", ":6379")
+	}, 5)
+	b := NewApp(pool)
 	a = b.(*app)
 	go a.Listen()
 	clients[0] = mockClient()

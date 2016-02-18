@@ -8,7 +8,7 @@ Implement By Observer pattern
 ## Documention
 
 * [API Reference](https://godoc.org/github.com/syhlion/redisocket)
-* [Sample Example](https://github.com/syhlion/redisocket/blob/master/example/main.go)
+* [Simple Example](https://github.com/syhlion/redisocket/blob/master/example/main.go)
 
 ## Install
 

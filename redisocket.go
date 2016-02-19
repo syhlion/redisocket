@@ -1,6 +1,7 @@
 package redisocket
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -19,6 +20,7 @@ const (
 )
 
 var conn redis.Conn
+var APPCLOSE = errors.New("APP_CLOSE")
 var Upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
@@ -67,6 +69,9 @@ type App interface {
 
 	//App start listen. It's blocked
 	Listen() error
+
+	//App Close
+	Close()
 }
 
 //NewApp It's create a App
@@ -78,6 +83,7 @@ func NewApp(p *redis.Pool) App {
 		RWMutex:     new(sync.RWMutex),
 		events:      make(map[string]map[Subscriber]bool),
 		subscribers: make(map[Subscriber]map[string]bool),
+		closeSign:   make(chan int),
 	}
 
 	return e
@@ -102,10 +108,10 @@ func (e *app) NewClient(m MsgHandler, w http.ResponseWriter, r *http.Request) (c
 
 type app struct {
 	psc         *redis.PubSubConn
-	conn        redis.Conn
 	rpool       *redis.Pool
 	events      map[string]map[Subscriber]bool
 	subscribers map[Subscriber]map[string]bool
+	closeSign   chan int
 	*sync.RWMutex
 }
 
@@ -197,10 +203,25 @@ func (a *app) listenRedis() <-chan error {
 }
 func (a *app) Listen() error {
 	redisErr := a.listenRedis()
+	defer func() {
+		a.psc.Close()
+	}()
 	select {
 	case e := <-redisErr:
 		return e
+	case <-a.closeSign:
+		for c, _ := range a.subscribers {
+			a.UnsubscribeAll(c)
+			c.Close()
+		}
+		return APPCLOSE
+
 	}
+}
+func (a *app) Close() {
+	a.closeSign <- 1
+	return
+
 }
 func (e *app) Notify(event string, data []byte) (err error) {
 

@@ -108,6 +108,7 @@ type app struct {
 func (a *app) Subscribe(event string, c Subscriber) (err error) {
 	a.Lock()
 
+	defer a.Unlock()
 	//observer map
 	if m, ok := a.subscribers[c]; ok {
 		m[event] = true
@@ -129,11 +130,11 @@ func (a *app) Subscribe(event string, c Subscriber) (err error) {
 			return
 		}
 	}
-	a.Unlock()
 	return
 }
 func (a *app) Unsubscribe(event string, c Subscriber) (err error) {
 	a.Lock()
+	defer a.Unlock()
 
 	//observer map
 	if m, ok := a.subscribers[c]; ok {
@@ -149,7 +150,6 @@ func (a *app) Unsubscribe(event string, c Subscriber) (err error) {
 			}
 		}
 	}
-	a.Unlock()
 
 	return
 }

@@ -29,7 +29,6 @@ func (c *client) readPump() <-chan error {
 	errChan := make(chan error)
 	go func() {
 		defer func() {
-			c.ws.Close()
 			c.Close()
 		}()
 		c.ws.SetReadLimit(maxMessageSize)
@@ -58,6 +57,7 @@ func (c *client) readPump() <-chan error {
 }
 func (c *client) Close() {
 	c.app.UnsubscribeAll(c)
+	c.ws.Close()
 	return
 }
 
@@ -77,8 +77,6 @@ func (c *client) writePump() <-chan error {
 	go func() {
 		t := time.NewTicker(pingPeriod)
 		defer func() {
-			c.ws.Close()
-			c.Close()
 			c.Close()
 			t.Stop()
 		}()

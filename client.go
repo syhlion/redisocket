@@ -10,14 +10,9 @@ import (
 type client struct {
 	ws   *websocket.Conn
 	send chan []byte
-	uuid string
 	*sync.RWMutex
 	MsgHandler
 	app *app
-}
-
-func (c *client) Uuid() string {
-	return c.uuid
 }
 
 func (c *client) Update(data []byte) {
@@ -33,24 +28,28 @@ func (c *client) readPump() <-chan error {
 
 	errChan := make(chan error)
 	go func() {
+		defer func() {
+			c.ws.Close()
+			c.Close()
+		}()
 		c.ws.SetReadLimit(maxMessageSize)
 		c.ws.SetReadDeadline(time.Now().Add(pongWait))
 		c.ws.SetPongHandler(func(string) error { c.ws.SetReadDeadline(time.Now().Add(pongWait)); return nil })
 		for {
-			msgType, data, err := c.ws.ReadMessage()
+			_, data, err := c.ws.ReadMessage()
 			if err != nil {
 				errChan <- err
 				close(errChan)
 				return
 			}
-			if msgType != websocket.TextMessage {
+			/*if msgType != websocket.TextMessage {
 				continue
-			}
+			}*/
 
 			err = c.AfterReadStream(c, data)
 			if err != nil {
 				errChan <- err
-				break
+				return
 			}
 		}
 	}()
@@ -59,16 +58,12 @@ func (c *client) readPump() <-chan error {
 }
 func (c *client) Close() {
 	c.app.UnsubscribeAll(c)
-	c.ws.Close()
 	return
 }
 
 func (c *client) Listen() (err error) {
 	writeErr := c.writePump()
 	readErr := c.readPump()
-	defer func() {
-		c.Close()
-	}()
 	select {
 	case e := <-writeErr:
 		return e
@@ -82,6 +77,9 @@ func (c *client) writePump() <-chan error {
 	go func() {
 		t := time.NewTicker(pingPeriod)
 		defer func() {
+			c.ws.Close()
+			c.Close()
+			c.Close()
 			t.Stop()
 		}()
 		for {

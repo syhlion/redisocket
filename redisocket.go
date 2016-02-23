@@ -2,9 +2,7 @@ package redisocket
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
-	"os/exec"
 	"sync"
 	"time"
 
@@ -38,8 +36,6 @@ type MsgHandler interface {
 
 //Subscriber
 type Subscriber interface {
-	//Get uuid
-	Uuid() string
 
 	//Clients start listen. It's blocked
 	Listen() error
@@ -90,16 +86,10 @@ func NewApp(p *redis.Pool) App {
 }
 func (e *app) NewClient(m MsgHandler, w http.ResponseWriter, r *http.Request) (c Subscriber, err error) {
 	ws, err := Upgrader.Upgrade(w, r, nil)
-	out, err := exec.Command("uuidgen").Output()
-	if err != nil {
-		return
-	}
-	uuid := fmt.Sprintf("%s", out)
 	c = &client{
 		ws:         ws,
 		send:       make(chan []byte, 4096),
 		RWMutex:    new(sync.RWMutex),
-		uuid:       uuid,
 		MsgHandler: m,
 		app:        e,
 	}
@@ -116,10 +106,6 @@ type app struct {
 }
 
 func (a *app) Subscribe(event string, c Subscriber) (err error) {
-	err = a.psc.Subscribe(event)
-	if err != nil {
-		return
-	}
 	a.Lock()
 
 	//observer map
@@ -138,6 +124,10 @@ func (a *app) Subscribe(event string, c Subscriber) (err error) {
 		clients := make(map[Subscriber]bool)
 		clients[c] = true
 		a.events[event] = clients
+		err = a.psc.Subscribe(event)
+		if err != nil {
+			return
+		}
 	}
 	a.Unlock()
 	return
@@ -203,9 +193,6 @@ func (a *app) listenRedis() <-chan error {
 }
 func (a *app) Listen() error {
 	redisErr := a.listenRedis()
-	defer func() {
-		a.psc.Close()
-	}()
 	select {
 	case e := <-redisErr:
 		return e

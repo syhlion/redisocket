@@ -25,10 +25,13 @@ func (t *ClientMessageHandler) BeforeWriteStream(sub redisocket.Subscriber, data
 func main() {
 	pool := redis.NewPool(func() (redis.Conn, error) {
 		return redis.Dial("tcp", ":6379")
-	}, 5)
+	}, 10)
 	app := redisocket.NewApp(pool)
 
-	go app.Listen()
+	err := make(chan error)
+	go func() {
+		err <- app.Listen()
+	}()
 	t := &ClientMessageHandler{app}
 
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
@@ -38,23 +41,32 @@ func main() {
 			log.Fatal("Client Connect Error")
 			return
 		}
-		app.Subscribe("channel1", c)
+		err = app.Subscribe("channel1", c)
+		log.Println("Sub:", err)
 		err = c.Listen()
 		log.Println(err, "http point")
 		return
 	})
-	http.HandleFunc("/ws2", func(w http.ResponseWriter, r *http.Request) {
+	/*
+		http.HandleFunc("/ws2", func(w http.ResponseWriter, r *http.Request) {
 
-		c, err := app.NewClient(t, w, r)
-		if err != nil {
-			log.Fatal("Client Connect Error")
+			c, err := app.NewClient(t, w, r)
+			if err != nil {
+				log.Fatal("Client Connect Error")
+				return
+			}
+			app.Subscribe("channel2", c)
+			err = c.Listen()
+			log.Println(err, "http point")
 			return
-		}
-		app.Subscribe("channel2", c)
-		err = c.Listen()
-		log.Println(err, "http point")
-		return
-	})
+		})*/
 
-	log.Fatal(http.ListenAndServe(":8888", nil))
+	go func() {
+		err <- http.ListenAndServe(":8888", nil)
+	}()
+	select {
+	case e := <-err:
+		log.Println(e)
+	}
+	log.Println(pool.ActiveCount())
 }

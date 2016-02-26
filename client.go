@@ -45,7 +45,7 @@ func (c *client) readPump() <-chan error {
 				continue
 			}
 
-			err = c.AfterReadStream(c, data)
+			err = c.AfterReadStream(data)
 			if err != nil {
 				errChan <- err
 				return
@@ -88,7 +88,7 @@ func (c *client) writePump() <-chan error {
 					close(errChan)
 					return
 				}
-				msg, err := c.BeforeWriteStream(c, msg)
+				msg, err := c.BeforeWriteStream(msg)
 				if err != nil {
 					continue
 				}

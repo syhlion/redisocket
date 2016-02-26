@@ -17,46 +17,63 @@ Implement By Observer pattern
 ## Useged
 
 ``` go
-type ClientMessageHandler struct{ redisocket.App }
 
-func (t *ClientMessageHandler) AfterReadStream(e redisocket.Subscriber, d []byte) (err error) {
-	t.App.Notify("channel1", d)
+type Client struct {
+	app redisocket.App
+	redisocket.Subscriber
+}
+
+func (c *Client) AfterReadStream(d []byte) (err error) {
+	c.app.Notify("channel1", d)
 
 	fmt.Println(string(d))
 	return err
 
 }
-func (t *ClientMessageHandler) BeforeWriteStream(sub redisocket.Subscriber, data []byte) (d []byte, e error) {
+func (c *Client) BeforeWriteStream(data []byte) (d []byte, e error) {
 	return data, nil
+}
+func (c *Client) Listen() error {
+
+    //it can subscribe many subject
+	err := c.app.Subscribe("channel1", c)
+	if err != nil {
+		return err
+	}
+	return c.Subscriber.Listen()
 }
 
 func main() {
-    //use redisgo package
-
-    pool:=redis.NewPool(func()(redis.Conn,error){
-        return redis.Dial("tcp", ":6379")
-    },5)
+	pool := redis.NewPool(func() (redis.Conn, error) {
+		return redis.Dial("tcp", ":6379")
+	}, 10)
 	app := redisocket.NewApp(pool)
 
-	go app.Listen()
-	t := &ClientMessageHandler{app}
+	err := make(chan error)
+	go func() {
+		err <- app.Listen()
+	}()
 
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 
-		c, err := app.NewClient(t, w, r)
+		c := &Client{app, nil}
+		sub, err := app.NewClient(c, w, r)
 		if err != nil {
 			log.Fatal("Client Connect Error")
 			return
 		}
-
-		// It can subscribe many subject 
-		//ex app.Subscribe("channel2",c)...etc
-		app.Subscribe("channel1", c)
+		c.Subscriber = sub
 		err = c.Listen()
 		log.Println(err, "http point")
 		return
 	})
 
-	log.Fatal(http.ListenAndServe(":8888", nil))
+	go func() {
+		err <- http.ListenAndServe(":8888", nil)
+	}()
+	select {
+	case e := <-err:
+		log.Println(e)
+	}
 }
 ```

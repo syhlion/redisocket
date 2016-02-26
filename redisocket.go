@@ -29,9 +29,9 @@ var Upgrader = websocket.Upgrader{
 type MsgHandler interface {
 
 	//AfterReadStream
-	AfterReadStream(self Subscriber, data []byte) error
+	AfterReadStream(data []byte) error
 	//BeforeWriteStream
-	BeforeWriteStream(self Subscriber, data []byte) ([]byte, error)
+	BeforeWriteStream(data []byte) ([]byte, error)
 }
 
 //Subscriber

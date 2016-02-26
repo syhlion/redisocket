@@ -52,19 +52,25 @@ type App interface {
 	NewClient(m MsgHandler, w http.ResponseWriter, r *http.Request) (Subscriber, error)
 
 	//A Subscriber can subscribe subject
-	Subscribe(event string, c Subscriber) error
+	Subscribe(subject string, c Subscriber) error
 
 	//A Subscriber can  unsubscribe subject
-	Unsubscribe(event string, c Subscriber) error
+	Unsubscribe(subject string, c Subscriber) error
 
 	//It can notify subscriber
-	Notify(event string, data []byte) error
+	Notify(subject string, data []byte) error
 
 	//A subscriber can cancel all subscriptions
 	UnsubscribeAll(c Subscriber)
 
 	//App start listen. It's blocked
 	Listen() error
+
+	//List Redis All Subject
+	ListSubject() ([]string, error)
+
+	//Count Redis Subject's subscribers
+	NumSubscriber(subject string) (int, error)
 
 	//App Close
 	Close()
@@ -77,7 +83,7 @@ func NewApp(p *redis.Pool) App {
 		rpool:       p,
 		psc:         &redis.PubSubConn{p.Get()},
 		RWMutex:     new(sync.RWMutex),
-		events:      make(map[string]map[Subscriber]bool),
+		subjects:    make(map[string]map[Subscriber]bool),
 		subscribers: make(map[Subscriber]map[string]bool),
 		closeSign:   make(chan int),
 	}
@@ -99,7 +105,7 @@ func (e *app) NewClient(m MsgHandler, w http.ResponseWriter, r *http.Request) (c
 type app struct {
 	psc         *redis.PubSubConn
 	rpool       *redis.Pool
-	events      map[string]map[Subscriber]bool
+	subjects    map[string]map[Subscriber]bool
 	subscribers map[Subscriber]map[string]bool
 	closeSign   chan int
 	*sync.RWMutex
@@ -119,12 +125,12 @@ func (a *app) Subscribe(event string, c Subscriber) (err error) {
 	}
 
 	//event map
-	if m, ok := a.events[event]; ok {
+	if m, ok := a.subjects[event]; ok {
 		m[c] = true
 	} else {
 		clients := make(map[Subscriber]bool)
 		clients[c] = true
-		a.events[event] = clients
+		a.subjects[event] = clients
 		err = a.psc.Subscribe(event)
 		if err != nil {
 			return
@@ -141,7 +147,7 @@ func (a *app) Unsubscribe(event string, c Subscriber) (err error) {
 		delete(m, event)
 	}
 	//event map
-	if m, ok := a.events[event]; ok {
+	if m, ok := a.subjects[event]; ok {
 		delete(m, c)
 		if len(m) == 0 {
 			err = a.psc.Unsubscribe(event)
@@ -157,7 +163,7 @@ func (a *app) UnsubscribeAll(c Subscriber) {
 	a.Lock()
 	if m, ok := a.subscribers[c]; ok {
 		for e, _ := range m {
-			delete(a.events[e], c)
+			delete(a.subjects[e], c)
 		}
 		delete(a.subscribers, c)
 	}
@@ -172,7 +178,7 @@ func (a *app) listenRedis() <-chan error {
 			switch v := a.psc.Receive().(type) {
 			case redis.Message:
 				a.RLock()
-				clients := a.events[v.Channel]
+				clients := a.subjects[v.Channel]
 				a.RUnlock()
 				for c, _ := range clients {
 					c.Update(v.Data)
@@ -204,6 +210,34 @@ func (a *app) Listen() error {
 		return APPCLOSE
 
 	}
+}
+func (a *app) ListSubject() (subs []string, err error) {
+	reply, err := redis.Values(a.rpool.Get().Do("PUBSUB", "CHANNELS"))
+	if err != nil {
+		return
+	}
+	if len(reply) == 0 {
+		return
+	}
+	if err = redis.ScanSlice(reply, &subs); err != nil {
+		return
+	}
+	return
+}
+func (a *app) NumSubscriber(subject string) (c int, err error) {
+	reply, err := redis.Values(a.rpool.Get().Do("PUBSUB", "NUMSUB", subject))
+	if err != nil {
+		return
+	}
+	if len(reply) == 0 {
+		return 0, nil
+	}
+	var channel string
+	var count int
+	if _, err = redis.Scan(reply, &channel, &count); err != nil {
+		return
+	}
+	return
 }
 func (a *app) Close() {
 	a.closeSign <- 1

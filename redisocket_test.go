@@ -56,28 +56,28 @@ func TestSubscribe(t *testing.T) {
 	for _, c := range clients {
 		subscribe(c)
 	}
-	if e, ok := a.events["channel1"]; ok {
+	if e, ok := a.subjects["channel1"]; ok {
 		if _, ok := e[clients[0]]; !ok {
 			t.Error("c1 no subscribe channel1")
 		}
 	} else {
 		t.Error("c1 no subscribe channel1")
 	}
-	if e, ok := a.events["channel1"]; ok {
+	if e, ok := a.subjects["channel1"]; ok {
 		if _, ok := e[clients[1]]; !ok {
 			t.Error("c2 no subscribe channel1")
 		}
 	} else {
 		t.Error("c2 no subscribe channel1")
 	}
-	if e, ok := a.events["channel2"]; ok {
+	if e, ok := a.subjects["channel2"]; ok {
 		if _, ok := e[clients[0]]; !ok {
 			t.Error("c1 no subscribe channel2")
 		}
 	} else {
 		t.Error("c1 no subscribe channel2")
 	}
-	if e, ok := a.events["channel3"]; ok {
+	if e, ok := a.subjects["channel3"]; ok {
 		if _, ok := e[clients[2]]; !ok {
 			t.Error("c1 no subscribe channel3")
 		}
@@ -96,7 +96,7 @@ func TestSubscribe(t *testing.T) {
 func TestUnsubscribe(t *testing.T) {
 	a.Unsubscribe("channel1", clients[0])
 
-	if e, ok := a.events["channel1"]; ok {
+	if e, ok := a.subjects["channel1"]; ok {
 		if _, ok := e[clients[0]]; ok {
 			t.Error("c1 no Unsubscribe channel1")
 		}
@@ -110,7 +110,7 @@ func TestUnsubscribe(t *testing.T) {
 
 func TestUnsubscribeAll(t *testing.T) {
 	a.UnsubscribeAll(clients[0])
-	if e, ok := a.events["channel2"]; ok {
+	if e, ok := a.subjects["channel2"]; ok {
 		if _, ok := e[clients[0]]; ok {
 			t.Error("c1 no Unsubscribe channel1")
 		}

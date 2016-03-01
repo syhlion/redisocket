@@ -34,8 +34,8 @@ func (m *mclient) Listen() (err error) {
 	return
 }
 
-func (m *mclient) Close() error {
-	return nil
+func (m *mclient) Close() {
+	return
 }
 
 func (m *mclient) Update(data []byte) {

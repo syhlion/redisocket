@@ -41,7 +41,7 @@ type Subscriber interface {
 	Listen() error
 
 	//Close clients connection
-	Close() error
+	Close()
 
 	//When the subscribe subject update. App can Notify Subscriber
 	Update(data []byte)

@@ -55,10 +55,9 @@ func (c *client) readPump() <-chan error {
 	return errChan
 
 }
-func (c *client) Close() {
+func (c *client) Close() error {
 	c.app.UnsubscribeAll(c)
-	c.ws.Close()
-	return
+	return c.ws.Close()
 }
 
 func (c *client) Listen() (err error) {

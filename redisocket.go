@@ -41,7 +41,7 @@ type Subscriber interface {
 	Listen() error
 
 	//Close clients connection
-	Close()
+	Close() error
 
 	//When the subscribe subject update. App can Notify Subscriber
 	Update(data []byte)
@@ -161,13 +161,13 @@ func (a *app) Unsubscribe(event string, c Subscriber) (err error) {
 }
 func (a *app) UnsubscribeAll(c Subscriber) {
 	a.Lock()
+	defer a.Unlock()
 	if m, ok := a.subscribers[c]; ok {
 		for e, _ := range m {
 			delete(a.subjects[e], c)
 		}
 		delete(a.subscribers, c)
 	}
-	a.Unlock()
 	return
 }
 func (a *app) listenRedis() <-chan error {

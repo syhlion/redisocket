@@ -14,7 +14,7 @@ Implement By Observer pattern
 
 `go get github.com/syhlion/redisocket`
 
-## Useged
+## Usaged
 
 ``` go
 

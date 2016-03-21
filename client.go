@@ -90,7 +90,14 @@ func (c *client) writePump() <-chan error {
 				}
 				msg, err := c.BeforeWriteStream(msg)
 				if err != nil {
-					continue
+					if e := c.write(websocket.TextMessage, []byte(err.Error())); e != nil {
+						errChan <- e
+						close(errChan)
+						return
+					}
+					errChan <- err
+					close(errChan)
+					return
 				}
 
 				if err := c.write(websocket.TextMessage, msg); err != nil {

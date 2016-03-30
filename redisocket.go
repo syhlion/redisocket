@@ -58,7 +58,7 @@ type App interface {
 	Unsubscribe(subject string, c Subscriber) error
 
 	//It can notify subscriber
-	Notify(subject string, data []byte) error
+	Notify(subject string, data []byte) (int, error)
 
 	//A subscriber can cancel all subscriptions
 	UnsubscribeAll(c Subscriber)
@@ -244,9 +244,9 @@ func (a *app) Close() {
 	return
 
 }
-func (e *app) Notify(event string, data []byte) (err error) {
+func (e *app) Notify(event string, data []byte) (val int, err error) {
 
-	_, err = e.rpool.Get().Do("PUBLISH", event, data)
+	val, err = redis.Int(e.rpool.Get().Do("PUBLISH", event, data))
 	err = e.rpool.Get().Flush()
 	return
 }

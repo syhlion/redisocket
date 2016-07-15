@@ -25,6 +25,8 @@ var Upgrader = websocket.Upgrader{
 	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
+type CloseHandler func() error
+
 //MsgHandler Handle client i/o message
 type MsgHandler interface {
 
@@ -38,7 +40,7 @@ type MsgHandler interface {
 type Subscriber interface {
 
 	//Clients start listen. It's blocked
-	Listen() error
+	Listen(h MsgHandler) error
 
 	//Close clients connection
 	Close()
@@ -49,7 +51,7 @@ type Subscriber interface {
 
 type App interface {
 	// It client's Producer
-	NewClient(m MsgHandler, w http.ResponseWriter, r *http.Request) (Subscriber, error)
+	NewClient(w http.ResponseWriter, r *http.Request) (Subscriber, error)
 
 	//A Subscriber can subscribe subject
 	Subscribe(subject string, c Subscriber) error
@@ -90,14 +92,13 @@ func NewApp(p *redis.Pool) App {
 
 	return e
 }
-func (e *app) NewClient(m MsgHandler, w http.ResponseWriter, r *http.Request) (c Subscriber, err error) {
+func (e *app) NewClient(w http.ResponseWriter, r *http.Request) (c Subscriber, err error) {
 	ws, err := Upgrader.Upgrade(w, r, nil)
 	c = &client{
-		ws:         ws,
-		send:       make(chan []byte, 4096),
-		RWMutex:    new(sync.RWMutex),
-		MsgHandler: m,
-		app:        e,
+		ws:      ws,
+		send:    make(chan []byte, 4096),
+		RWMutex: new(sync.RWMutex),
+		app:     e,
 	}
 	return
 }
@@ -201,8 +202,10 @@ func (a *app) Listen() error {
 	redisErr := a.listenRedis()
 	select {
 	case e := <-redisErr:
+		close(a.closeSign)
 		return e
 	case <-a.closeSign:
+		close(a.closeSign)
 		for c, _ := range a.subscribers {
 			a.UnsubscribeAll(c)
 			c.Close()

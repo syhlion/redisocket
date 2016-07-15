@@ -9,29 +9,25 @@ import (
 	"github.com/syhlion/redisocket"
 )
 
-type MessageHandle struct {
+type User struct {
 	app redisocket.App
 	redisocket.Subscriber
 }
 
-func (c *MessageHandle) AfterReadStream(d []byte) (err error) {
+func (c *User) AfterReadStream(d []byte) (err error) {
 	c.app.Notify("channel1", d)
 
 	fmt.Println(string(d))
 	return err
 
 }
-func (c *MessageHandle) BeforeWriteStream(data []byte) (d []byte, e error) {
+func (c *User) BeforeWriteStream(data []byte) (d []byte, e error) {
 	return data, nil
 }
 
-type Client struct {
-	app redisocket.App
-	redisocket.Subscriber
-}
+func (c *User) Listen() (err error) {
+	return c.Subscriber.Listen(c)
 
-func (c *Client) Listen() (err error) {
-	return
 }
 
 func main() {
@@ -47,13 +43,12 @@ func main() {
 
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 
-		m := &MessageHandle{}
-		sub, err := app.NewClient(m, w, r)
+		sub, err := app.NewClient(w, r)
 		if err != nil {
 			log.Fatal("Client Connect Error")
 			return
 		}
-		c := &Client{app, sub}
+		c := &User{app, sub}
 		err = c.Listen()
 		log.Println(err, "http point")
 		return

@@ -61,7 +61,8 @@ func (c *client) Close() {
 	return
 }
 
-func (c *client) Listen() (err error) {
+func (c *client) Listen(h MsgHandler) (err error) {
+	c.MsgHandler = h
 	writeErr := c.writePump()
 	readErr := c.readPump()
 	select {

@@ -1,9 +1,11 @@
-# Redisocket
+# redisocket
 [![Build Status](https://travis-ci.org/syhlion/redisocket.svg?branch=master)](https://travis-ci.org/syhlion/redisocket)
 
 Base on gorilla/websocket & garyburd/redigo
 
 Implement By Observer pattern
+
+*A new version,Plaease use this [redisocket.v2](https://www.github.com/syhlion/redisocket.v2)*
 
 ## Documention
 
